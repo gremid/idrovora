@@ -2,12 +2,13 @@
   (:gen-class)
   (:require [clojure.java.io :as io]
             [clojure.tools.cli :refer [parse-opts]]
+            [idrovora.http :as http]
             [idrovora.workspace :as ws]
-            [mount.core :as mount])
-  (:import java.io.File))
+            [mount.core :as mount]))
 
 (def default-args
-  {:idrovora.workspace/dir (io/file "workspace")
+  {:idrovora.http/port 3000
+   :idrovora.workspace/dir (io/file "workspace")
    :idrovora.workspace/cleanup-schedule "0 1 0 * * ?"
    :idrovora.workspace/job-max-age "PT168H"})
 
