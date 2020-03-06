@@ -1,0 +1,6 @@
+classes/
+dist/idrovora.jar
+workspace/jobs/
+
+.cpcache/
+.nrepl-port

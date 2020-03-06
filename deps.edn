@@ -1,0 +1,17 @@
+{:paths ["src" "classes"]
+
+ :deps
+ {org.clojure/clojure {:mvn/version "1.10.1"}
+  org.clojure/core.async {:mvn/version "1.0.567"}
+  org.clojure/tools.logging {:mvn/version "1.0.0"}
+  org.clojure/tools.cli {:mvn/version "1.0.194"}
+  mount {:mvn/version "0.1.16"}
+  juxt/dirwatch {:mvn/version "0.2.5"}
+  cronjure {:mvn/version "0.1.1"}
+  com.xmlcalabash/xmlcalabash {:mvn/version "1.1.30-99"
+                               :exclusions [isorelax/isorelax
+                                            relaxngDatatype/relaxngDatatype
+                                            commons-logging/commons-logging]}}
+
+ :mvn/repos
+ {"restlet" {:url "https://maven.restlet.com"}}}

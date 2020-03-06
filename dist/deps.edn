@@ -1,0 +1,3 @@
+{:deps
+ {uberdeps {:mvn/version "0.1.8"}
+  org.slf4j/slf4j-jdk14 {:mvn/version "1.7.25"}}}
