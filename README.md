@@ -7,3 +7,9 @@
 
 * [Piperack Docs](http://xmlcalabash.com/docs/reference/using-piperack.html)
 * [Ruby FS Watcher Library](https://github.com/guard/listen)
+
+## License
+
+Copyright &copy; 2020 Gregor Middell.
+
+This project is licensed under the GNU General Public License v3.0.
