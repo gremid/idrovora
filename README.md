@@ -40,6 +40,22 @@ The built JAR file can be executed:
 $ java -jar dist/idrovora.jar
 ```
 
+## Roadmap
+
+* [x] XProc engine based on XML Calabash
+  * [x] Call XProc pipelines with job context (source/result dirs) given as
+        pipeline options
+    [ ] Improved error reporting
+* [x] Filesystem watcher, notifying engine when jobs are ready to be run
+* [ ] HTTP interface
+  * [x] Embedded HTTP server
+  * [ ] Allow jobs to be triggered via POST requests
+  * [ ] Synchronously respond to job trigger requests when jobs are completed
+* [ ] User interface
+  * [x] Basic command line interface
+  * [ ] Provide usage information/help
+  * [ ] Make HTTP port configurable
+  
 ## Notes/Links
 
 * [Piperack Docs](http://xmlcalabash.com/docs/reference/using-piperack.html)
