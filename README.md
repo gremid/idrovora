@@ -5,22 +5,39 @@
      alt="Idrovora by Marianna57 / Wikimedia Commons / CC-BY-SA-4.0"
      align="right">
 
-## Getting Started
+_This is work in progress!_
 
-These instructions will get you a copy of the project up and running on your
-local machine for development and testing purposes. See deployment for notes on
-how to deploy the project on a live system.
+[XProc](https://www.w3.org/TR/xproc/) is a versatile language to describe
+XML-based processing pipelines. With [XML Calabash](http://xmlcalabash.com/) and
+its embedded [Saxon Processor](http://saxon.sourceforge.net/) exists a stable
+and feature-rich implementation, that allows developers to develop document
+processing logic in a platform-independent way using XML-based technologies.
+
+Idrovora provides an execution context for XProc pipelines, where
+
+1. pipelines are run with input read from and results written to the
+   filesystem following a common directory layout,
+1. the execution of pipelines can be triggered via requests to an embedded HTTP
+   server or via filesystem events (_hot folders_),
+1. pipelines are run concurrently and asynchronously by a daemon process, thereby
+   not incurring JVM-related startup costs for each pipeline execution.
+
+It is designed as a backend service for systems which depend on XML-based
+processing logic and consequently have to incorporate a Java runtime environment
+needed by the aforementioned tools, but want to do so with a minimalistic
+interface based on HTTP and the local filesystem.
+
+## Getting Started
 
 ### Prerequisites
 
 In order to build Idrovora, you need to install
 
+* [Java v8](https://jdk.java.net/)
 * [Clojure v1.10](https://clojure.org/guides/getting_started)
 * [Python v3](https://www.python.org/)
 
-For running Idrovora, only a Java runtime environment is needed, version 8 or later will do.
-
-* [Java](https://jdk.java.net/)
+For running Idrovora, only the Java runtime environment is needed.
 
 ### Build
 
@@ -34,7 +51,8 @@ When successfully run, you should find the resulting JAR file in `dist/`.
 
 ### Run
 
-The built JAR file can be executed. In order to get help on the available options, execute the following:
+The built JAR file can be executed. In order to get help on the available
+options, execute the following:
 
 ```
 $ java -jar dist/idrovora.jar --help
@@ -54,6 +72,68 @@ Options:
   -h, --help
 […]
 ```
+
+Starting Idrovora with defaults, creating a `workspace/` in the current
+directory and running an HTTP server on port 3000, simply execute the JAR
+without any arguments:
+
+```
+$ java -jar idrovora.jar
+2020-03-09 14:52:51 [main       | INFO  | idrovora.cli        ] Starting Idrovora
+2020-03-09 14:52:51 [main       | INFO  | idrovora.http       ] Starting HTTP server at 3000/tcp
+2020-03-09 14:52:51 [main       | INFO  | idrovora.workspace  ] Start watching 'workspace/jobs'
+2020-03-09 14:52:51 [main       | INFO  | idrovora.workspace  ] Scheduling cleanup of old jobs (0 1 0 * * ?)
+```
+
+Pipelines can be defined in `workspace/xpl/`, for instance a pipeline named `test` in `workspace/xpl/test.xpl`:
+
+```XProc
+<?xml version="1.0" encoding="UTF-8"?>
+<p:declare-step xmlns:p="http://www.w3.org/ns/xproc"
+                xmlns:c="http://www.w3.org/ns/xproc-step"
+                version="1.0">
+  <p:option name="source-dir" required="true"/>
+  <p:option name="result-dir" required="true"/>
+  <p:load name="read-from-input">
+    <p:with-option name="href" select="concat($source-dir,'document.xml')"/>
+  </p:load>
+  <p:identity/>
+  <p:store name="store-to-output">
+    <p:with-option name="href" select="concat($result-dir,'document.xml')"/>
+  </p:store>
+</p:declare-step>
+```
+
+Jobs for this pipeline can then be created in sub-directories under `workspace/jobs/test/`, i. e.
+
+```
+workspace/jobs/
+└── test
+    └── 82d11012-cf02-4ec0-b3c6-f9fe004de7b0
+        ├── result
+        │   └── document.xml
+        ├── source
+        │   └── document.xml
+        └── status
+            ├── job-failed
+            ├── result-ready
+            └── source-ready
+```
+
+In a job-directory, here one named with the UUID
+`82d11012-cf02-4ec0-b3c6-f9fe004de7b0`, the sub-directories `source/` and
+`result/` hold input and output data for the job; they are passed as URIs via
+options (`source-dir` and `result-dir`) to the pipeline. Files in the `status/`
+sub-directory are used for controlling job execution and signaling job
+completion: 
+
+* touching `status/source-ready` will signal to Idrovora that the sources have been written to  `source/` and the job can be scheduled for execution,
+* upon creation/modification of `status/result-ready`, a listening process can
+  assume that the pipeline executed successfully and results can be picked up
+  from `result/`,
+* the creation/modification of `status/job-failed` signals an error occurring
+  while the job was run through the pipeline.
+
 
 ## Roadmap
 
