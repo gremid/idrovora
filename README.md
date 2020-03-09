@@ -10,7 +10,7 @@ _This is work in progress!_
 [XProc](https://www.w3.org/TR/xproc/) is a versatile language to describe
 XML-based processing pipelines. With [XML Calabash](http://xmlcalabash.com/) and
 its embedded [Saxon Processor](http://saxon.sourceforge.net/) exists a stable
-and feature-rich implementation, that allows developers to develop document
+and feature-rich implementation, that allows developers to implement document
 processing logic in a platform-independent way using XML-based technologies.
 
 Idrovora provides an execution context for XProc pipelines, where
@@ -138,9 +138,9 @@ completion:
 ## Roadmap
 
 * [x] XProc engine based on XML Calabash
-  * [x] Call XProc pipelines with job context (source/result dirs) given as
+  * [x] Call XProc pipelines with job context (source/result dirs) given as 
         pipeline options
-    [ ] Improved error reporting
+  * [ ] Improved error reporting
 * [x] Filesystem watcher, notifying engine when jobs are ready to be run
 * [ ] HTTP interface
   * [x] Embedded HTTP server
