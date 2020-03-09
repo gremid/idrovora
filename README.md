@@ -34,10 +34,25 @@ When successfully run, you should find the resulting JAR file in `dist/`.
 
 ### Run
 
-The built JAR file can be executed:
+The built JAR file can be executed. In order to get help on the available options, execute the following:
 
 ```
-$ java -jar dist/idrovora.jar
+$ java -jar dist/idrovora.jar --help
+Idrovora - A pump station for your XProc pipelines
+Copyright (C) 2020 Gregor Middell
+
+See <https://github.com/gremid/idrovora> for more information.
+
+Usage: java -jar idrovora.jar [OPTION]...
+
+Options:
+  -x, --xpl-dir $IDROVORA_XPL_DIR           workspace/xpl   source directory with XProc pipeline definitions
+  -j, --job-dir $IDROVORA_JOB_DIR           workspace/jobs  spool directory for pipeline jobs
+  -p, --port $IDROVORA_HTTP_PORT            3000            HTTP port for embedded server
+  -c, --cleanup $IDROVORA_CLEANUP_SCHEDULE  0 1 0 * * ?     Schedule for periodic cleanup of old jobs (cron expression)
+  -a, --job-max-age $IDROVORA_JOB_MAX_AGE   PT168H          Maximum age of jobs; older jobs are removed periodically
+  -h, --help
+[…]
 ```
 
 ## Roadmap
@@ -55,6 +70,7 @@ $ java -jar dist/idrovora.jar
   * [x] Basic command line interface
   * [ ] Provide usage information/help
   * [ ] Make HTTP port configurable
+* [ ] Provide [runtime metrics](https://metrics.dropwizard.io/4.1.2/)
   
 ## Notes/Links
 

@@ -11,6 +11,6 @@
 
 (defn stop
   []
-  (mount/stop))
+  (cli/stop))
 
 

@@ -8,23 +8,26 @@
             [juxt.dirwatch :refer [close-watcher watch-dir]]
             [mount.core :as mount :refer [defstate]])
   (:import java.io.File
-           java.nio.file.Path))
+           java.nio.file.Path
+           java.nio.file.LinkOption
+           com.cronutils.model.Cron))
+
+(def ^:private no-link-options (make-array LinkOption 0))
 
 (defn ^Path file-path
   [^File f]
-  (.toPath f))
+  (let [^Path p (.toPath f)]
+    (if (.exists f) (.toRealPath p no-link-options) p)))
 
 (defn ^String file-uri
   [^File f]
   (.. f (toURI) (toASCIIString)))
 
-(defn ^File absolute-file
-  [^File f]
-  (.getAbsoluteFile f))
-
 (defn file-ancestors
   [^File f]
-  (if f (lazy-seq (cons f (file-ancestors (.getParentFile f))))))
+  (if f
+    (let [^File f (.getAbsoluteFile f)]
+      (lazy-seq (cons f (file-ancestors (.getParentFile f)))))))
 
 (defn file-descendants
   [^File f]
@@ -36,13 +39,10 @@
   [^File f ^File a]
   (.startsWith (file-path f) (file-path a)))
 
-(defn pipelines-changed?
-  [dir {:keys [^File file]}]
-  (file-ancestor? file (io/file dir "pipelines")))
-
 (defn jobs-changed?
-  [dir {:keys [^File file action]}]
-  (and (#{:create :modify} action) (file-ancestor? file (io/file dir "jobs"))))
+  [{:keys [^File file action]}]
+  (let [{:keys [::job-dir]} (mount/args)]
+    (and (#{:create :modify} action) (file-ancestor? file job-dir))))
 
 (defn job->status-change
   [{:keys [^File job ^File file]}]
@@ -51,72 +51,73 @@
       (keyword p2))))
 
 (defn job->pipeline
-  [dir ^File job]
-  (let [id (.. job (getParentFile) (getName))
-        ^File pipeline (io/file dir "pipelines" id)]
-    (if (.isDirectory pipeline) pipeline)))
+  [^File job]
+  (let [^File xpl-dir (::xpl-dir (mount/args))
+        id (.. job (getParentFile) (getName))
+        pipeline (io/file xpl-dir (str id ".xpl"))]
+    (if (.isFile pipeline) pipeline)))
 
 (defn event->job
-  [dir {:keys [^File file action] :as evt}]
-  (let [[_ ^File job]
+  [{:keys [^File file action] :as evt}]
+  (let [^File job-dir (::job-dir (mount/args))
+        job-dir (.getAbsoluteFile job-dir)
+        [_ ^File job]
         (->> (file-ancestors file)
-             (take-while (complement #{(io/file dir "jobs")}))
+             (take-while (complement #{job-dir}))
              (reverse))]
-    (when-let [pipeline (if job (job->pipeline dir job))]
+    (when-let [pipeline (if job (job->pipeline job))]
       (assoc evt :pipeline pipeline :job job))))
 
 (defstate fs-events
-  :start (let [{:keys [::dir]} (mount/args)]
-           (doseq [^File d [dir (io/file dir "pipelines") (io/file dir "jobs")]]
-             (when-not (.isDirectory d) (.mkdirs d)))
-           (let [^File dir (absolute-file dir)
-                 ch (a/chan)]
-             (log/infof "Start watching workspace '%s'" dir)
-             [dir ch (watch-dir (partial a/>!! ch) dir)]))
-  :stop (let [[dir ch watcher] fs-events]
-          (log/infof "Stop watching workspace '%s'" dir)
+  :start (let [^File job-dir (::job-dir (mount/args))
+               ch (a/chan)]
+           (when-not (.isDirectory job-dir) (.mkdirs job-dir))
+           (log/infof "Start watching '%s'" job-dir)
+           [ch (watch-dir (partial a/>!! ch) job-dir) job-dir])
+  :stop (let [[ch watcher job-dir] fs-events]
+          (log/infof "Stop watching '%s'" job-dir)
           (close-watcher watcher)
           (a/close! ch)))
 
 (defn run-job!
   [{:keys [job pipeline]}]
-  (let [xpl (file-uri (io/file pipeline "main.xpl"))
+  (let [xpl (file-uri pipeline)
         source (file-uri (io/file job "source"))
         result (file-uri (io/file job "result"))
         result-ready (io/file job "status" "result-ready")
         job-failed (io/file job "status" "job-failed")
         options {"source-dir" source "result-dir" result}]
     (try
+      (log/debugf "Running job %s" (str job))
       (xproc/run-pipeline! xpl options)
       (spit result-ready "")
+      (log/debugf "Completed job %s" (str job))
       (catch Throwable t
-        (log/warnf t "Error running %s" job)
+        (log/warnf t "Error running job %s" (str job))
         (spit job-failed "")))))
 
 (defstate event-listener
   :start (a/go-loop []
-           (let [[dir ch] fs-events]
+           (let [[ch] fs-events]
              (when-let [evt (a/<! ch)]
                (log/trace (str [(-> evt :action) (-> evt :file str)]))
-               (when (jobs-changed? dir evt)
-                 (when-let [job (event->job dir evt)]
+               (when (jobs-changed? evt)
+                 (when-let [job (event->job evt)]
                    (when (= :source-ready (job->status-change job))
                      (run-job! job))))
-               (when (pipelines-changed? dir evt)
-                 (log/info "Pipelines changed"))
                (recur)))))
 
 (defstate cleanup-scheduler
   :start
-  (let [{:keys [::dir ::cleanup-schedule ::job-max-age]} (mount/args)
-        schedule (cron/parse crondef/quartz cleanup-schedule)
-        max-age (java.time.Duration/parse job-max-age)
+  (let [{:keys [::job-dir ::cleanup-schedule ::job-max-age]} (mount/args)
+        next (partial cron/time-to-next-execution cleanup-schedule :millis)
         ch (a/chan)]
+    (log/infof "Scheduling cleanup of old jobs (%s)"
+               (.asString ^Cron cleanup-schedule))
     (a/go-loop []
-      (let [millis-to-next (cron/time-to-next-execution schedule :millis)]
-        (when-let [_ (a/alt! (a/timeout millis-to-next) :scheduled ch ([v] v))]
-          (log/infof "Cleaning up %s" dir)
-          (recur))))
+      (when-let [_ (a/alt! (a/timeout (next)) :scheduled ch ([v] v))]
+        (log/infof "Cleaning up %s" job-dir)
+        (recur)))
     ch)
   :stop
   (a/close! cleanup-scheduler))

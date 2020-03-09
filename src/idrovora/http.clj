@@ -8,7 +8,9 @@
             [reitit.ring.spec :as spec]
             [muuntaja.core :as m]
             [mount.core :refer [defstate]]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [mount.core :as mount]
+            [clojure.tools.logging :as log]))
 
 (def handler
   (ring/ring-handler
@@ -29,8 +31,12 @@
 
 (defstate server
   :start
-  (let [port 3000]
+  (let [{:keys [::http-port]} (mount/args)]
+    (log/infof "Starting HTTP server at %s/tcp" http-port)
     (require 'ring.adapter.jetty)
     ((ns-resolve 'ring.adapter.jetty 'run-jetty)
-     handler {:port port :join? false}))
-  :stop (.. server (stop)))
+     handler {:port http-port :join? false}))
+  :stop
+  (do
+    (log/infof "Stopping HTTP server")
+    (.. server (stop))))
