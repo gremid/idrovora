@@ -13,7 +13,8 @@ if classes_dir.is_dir():
 classes_dir.mkdir()
 
 run([
-    'clojure', '-e', '(compile \'idrovora.cli)'
+    'clojure', '-e',
+    '(doseq [p [\'idrovora.cli \'clojure.tools.logging.impl]] (compile p))'
 ], cwd=project_dir.as_posix(), check=True)
 
 run([
