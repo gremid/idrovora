@@ -35,16 +35,15 @@ In order to build Idrovora, you need to install
 
 * [Java v8](https://jdk.java.net/)
 * [Clojure v1.10](https://clojure.org/guides/getting_started)
-* [Python v3](https://www.python.org/)
 
 For running Idrovora, only the Java runtime environment is needed.
 
 ### Build
 
-Compiling and packaging Idrovora in a JAR including all dependencies can be achieved via a Python-based build script:
-
-```
-$ python3 dist/package.py
+Compiling and packaging Idrovora in a JAR including all dependencies can be achieved via
+    
+```plaintext
+$ (cd dist && clojure -m build)
 ```
 
 When successfully run, you should find the resulting JAR file in `dist/`.
@@ -148,8 +147,8 @@ completion:
   * [ ] Synchronously respond to job trigger requests when jobs are completed
 * [ ] User interface
   * [x] Basic command line interface
-  * [ ] Provide usage information/help
-  * [ ] Make HTTP port configurable
+  * [x] Provide usage information/help
+  * [x] Make HTTP port configurable
 * [ ] Provide [runtime metrics](https://metrics.dropwizard.io/4.1.2/)
   
 ## Notes/Links
