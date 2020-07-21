@@ -2,11 +2,22 @@
 
  :deps
  {org.clojure/clojure {:mvn/version "1.10.1"}
+
+  ;; Async processing
   org.clojure/core.async {:mvn/version "1.0.567"}
+
+  ;; Logging
   org.clojure/tools.logging {:mvn/version "1.0.0"}
+  org.slf4j/jcl-over-slf4j {:mvn/version "1.7.30"}
+  org.slf4j/jul-to-slf4j {:mvn/version "1.7.30"}
+
+  ;; Utilities
   org.clojure/tools.cli {:mvn/version "1.0.194"}
+  cronjure {:mvn/version "0.1.1"}
   mount {:mvn/version "0.1.16"}
   juxt/dirwatch {:mvn/version "0.2.5"}
+
+  ;; Ring/HTTP
   ;;metosin/muuntaja {:mvn/version "0.6.6"}
   metosin/reitit-core {:mvn/version "0.4.2"}
   metosin/reitit-ring {:mvn/version "0.4.2"}
@@ -14,7 +25,7 @@
   metosin/reitit-spec {:mvn/version "0.4.2"}
   ring/ring-jetty-adapter {:mvn/version "1.8.0"}
 
-  cronjure {:mvn/version "0.1.1"}
+  ;; XProc implementation
   com.xmlcalabash/xmlcalabash {:mvn/version "1.1.30-99"
                                :exclusions [isorelax/isorelax
                                             relaxngDatatype/relaxngDatatype
