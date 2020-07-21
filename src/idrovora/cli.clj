@@ -13,58 +13,58 @@
            java.time.Duration
            com.cronutils.model.Cron))
 
-(def parse-cron
-  (partial cron/parse crondef/quartz))
-
 (def defaults
-  {:idrovora.workspace/job-dir (io/file "workspace" "jobs")
-   :idrovora.workspace/xpl-dir (io/file "workspace" "xpl")
-   :idrovora.workspace/cleanup-schedule (parse-cron "0 1 0 * * ?")
-   :idrovora.workspace/job-max-age (Duration/parse "PT168H")
-   :idrovora.http/http-port 3000})
+  {:idrovora.workspace/job-dir "workspace/jobs"
+   :idrovora.workspace/xpl-dir "workspace/xpl"
+   :idrovora.workspace/cleanup-schedule "0 1 0 * * ?"
+   :idrovora.workspace/job-max-age "PT168H"
+   :idrovora.http/http-port "3000"
+   :idrovora.http/http-context-path ""})
 
-(defn cli-arg-default
-  ([id]
-   (let [def-val (cli-arg-default id {})]
-     (condp instance? def-val
-       Cron (.asString ^Cron def-val)
-       (str def-val))))
-  ([id _]
-   (let [env (str/join "-" ["idrovora" (name id)])
-         env (-> env (str/replace #"-" "_") (str/upper-case))]
-     (or (System/getenv env) (defaults id)))))
+(defn cli-arg
+  ([id desc]
+   (cli-arg id desc nil))
+  ([id desc short-opt]
+   (cli-arg id desc short-opt identity))
+  ([id desc short-opt parse]
+   (let [k (name id)
+         env (str/join "-" ["idrovora" k])
+         env (-> env (str/replace #"-" "_") (str/upper-case))
+         long-opt (str "--" k " $" env)
+         default-val (parse (or (System/getenv env) (defaults id)))
+         default-desc (condp instance? default-val
+                        Cron (.asString ^Cron default-val)
+                        (str default-val))]
+     [short-opt long-opt desc
+      :id id
+      :parse-fn parse
+      :default default-val
+      :default-desc default-desc])))
 
 (def cli-args
-  [["-x" "--xpl-dir $IDROVORA_XPL_DIR"
+  [(cli-arg
+    :idrovora.workspace/xpl-dir
     "source directory with XProc pipeline definitions"
-    :id :idrovora.workspace/xpl-dir
-    :default-fn (partial cli-arg-default :idrovora.workspace/xpl-dir)
-    :default-desc (cli-arg-default :idrovora.workspace/xpl-dir)
-    :parse-fn io/file]
-   ["-j" "--job-dir $IDROVORA_JOB_DIR"
+    "-x" io/file)
+   (cli-arg
+    :idrovora.workspace/job-dir
     "spool directory for pipeline jobs"
-    :id :idrovora.workspace/job-dir
-    :default-fn (partial cli-arg-default :idrovora.workspace/job-dir)
-    :default-desc (cli-arg-default :idrovora.workspace/job-dir)
-    :parse-fn io/file]
-   ["-p" "--port $IDROVORA_HTTP_PORT"
+    "-j" io/file)
+   (cli-arg
+    :idrovora.http/http-port
     "HTTP port for embedded server"
-    :id :idrovora.http/http-port
-    :default-fn (partial cli-arg-default :idrovora.http/http-port)
-    :default-desc (cli-arg-default :idrovora.http/http-port)
-    :parse-fn #(Integer/parseInt %)]
-   ["-c" "--cleanup $IDROVORA_CLEANUP_SCHEDULE"
+    "-p" #(Integer/parseInt %))
+   (cli-arg
+    :idrovora.http/http-context-path
+    "HTTP context path (empty aka. '' by default)")
+   (cli-arg
+    :idrovora.workspace/cleanup-schedule
     "Schedule for periodic cleanup of old jobs (cron expression)"
-    :id :idrovora.workspace/cleanup-schedule
-    :default-fn (partial cli-arg-default :idrovora.workspace/cleanup-schedule)
-    :default-desc (cli-arg-default :idrovora.workspace/cleanup-schedule)
-    :parse-fn parse-cron]
-   ["-a" "--job-max-age $IDROVORA_JOB_MAX_AGE"
+    "-c" (partial cron/parse crondef/quartz))
+   (cli-arg
+    :idrovora.workspace/job-max-age
     "Maximum age of jobs; older jobs are removed periodically"
-    :id :idrovora.workspace/job-max-age
-    :default-fn (partial cli-arg-default :idrovora.workspace/job-max-age)
-    :default-desc (cli-arg-default :idrovora.workspace/job-max-age)
-    :parse-fn #(Duration/parse %)]
+    "-a" #(Duration/parse %))
    ["-h" "--help"]])
 
 (defn usage [options-summary]
