@@ -43,7 +43,7 @@ For running Idrovora, only the Java runtime environment is needed.
 Compiling and packaging Idrovora in a JAR including all dependencies can be achieved via
     
 ```plaintext
-$ (cd dist && clojure -m build)
+$ (cd dist && clojure -m build && docker build -t gremid/idrovora .)
 ```
 
 When successfully run, you should find the resulting JAR file in `dist/`.
