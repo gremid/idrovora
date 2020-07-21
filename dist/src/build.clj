@@ -44,9 +44,8 @@
   (let [deps (-> (file project-dir "deps.edn") slurp edn/read-string)]
     (binding [uberdeps/level :error]
       (deps-dir/with-dir project-dir
-        (uberdeps/package
-         deps "idrovora.jar"
-         {:main-class "idrovora.cli"})))))
+        (uberdeps/package deps "idrovora.jar")))
+    (sh-run! "jar" "ufm" "idrovora.jar" "idrovora-manifest.mf")))
 
 (defn -main
   [& args]
