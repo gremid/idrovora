@@ -1,6 +1,6 @@
 (ns idrovora.http
-  (:require [clojure.spec.alpha :as s]
-            [clojure.tools.logging :as log]
+  (:require [clojure.tools.logging :as log]
+            [idrovora.workspace :as ws]
             [mount.core :as mount :refer [defstate]]
             [muuntaja.core :as m]
             [reitit.coercion.spec :refer [coercion]]
@@ -10,14 +10,16 @@
             [reitit.ring.middleware.muuntaja :as muuntaja]
             [ring.middleware.defaults :as defaults]))
 
+(defn log-exceptions
+  [handler ^Throwable e request]
+  (when-not (some-> e ex-data :type #{::ring/response})
+    (log/warn e (.getMessage e)))
+  (handler e request))
+
 (def exception-middleware
   (exception/create-exception-middleware
-   (merge
-    exception/default-handlers
-    {::exception/wrap (fn [handler ^Throwable e request]
-                        (if-not (some-> e ex-data :type #{::ring/response})
-                          (log/warn e (.getMessage e)))
-                        (handler e request))})))
+   (-> exception/default-handlers
+       (assoc ::exception/wrap log-exceptions))))
 
 (def middleware
   [{:name ::defaults
@@ -42,12 +44,7 @@
      {:coercion coercion
       :muuntaja m/instance
       :middleware middleware}
-     ["/:pipeline/:job/*path"
-      {:handler
-       (fn [req respond _]
-         (respond {:status 200 :body (get-in req [:parameters :path] {})}))
-       :parameters
-       {:path (s/keys :req-un [::pipeline ::job ::path])}}]])
+     ws/handlers])
    (ring/routes
     (ring/redirect-trailing-slash-handler)
     (ring/create-default-handler))))

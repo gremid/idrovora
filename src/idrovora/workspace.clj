@@ -1,11 +1,14 @@
 (ns idrovora.workspace
   (:require [clojure.core.async :as a]
+            [clojure.spec.alpha :as s]
+            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [cronjure.core :as cron]
             [idrovora.fs :as fs]
             [idrovora.xproc :as xproc]
             [juxt.dirwatch :refer [close-watcher watch-dir]]
-            [mount.core :as mount :refer [defstate]])
+            [mount.core :as mount :refer [defstate]]
+            [ring.util.response :as response])
   (:import com.cronutils.model.Cron
            java.io.File))
 
@@ -88,3 +91,34 @@
     ch)
   :stop
   (a/close! cleanup-scheduler))
+
+(defn handle-resource-request
+  [{{{:keys [pipeline job path] :as resource} :path} :parameters :as req}
+   respond _]
+  (let [^File job-dir (job-dir)
+        ^File f (fs/file job-dir pipeline job path)
+        p (str/join "/" [pipeline job path])]
+    (->
+     (cond
+       ;; we only deliver job resources
+       (not (fs/ancestor? job-dir f))
+       (response/bad-request p)
+       ;; directories are always delivered as ZIP archives
+       (fs/directory? f)
+       (-> (response/response f)
+           (assoc :muuntaja/content-type "application/zip"))
+       ;; files are delivered based on content negotiation
+       (fs/file? f)
+       (response/response f)
+       ;; fallback: HTTP-404
+       :else
+       (-> (response/not-found p)
+           (response/content-type "text/plain")))
+     (respond))))
+
+(def handlers
+  [""
+   ["/:pipeline/:job/*path"
+    {:handler handle-resource-request
+     :parameters {:path (s/keys :req-un [::pipeline ::job ::path])}
+     :muuntaja fs/muuntaja}]])

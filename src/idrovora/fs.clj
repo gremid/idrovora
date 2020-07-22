@@ -1,8 +1,12 @@
 (ns idrovora.fs
   (:refer-clojure :exclude [ancestors descendants])
-  (:require [clojure.java.io :as io])
-  (:import java.io.File
-           [java.nio.file CopyOption Files LinkOption Path]))
+  (:require [clojure.java.io :as io]
+            [muuntaja.core :as m]
+            [muuntaja.format.core :as m-format])
+  (:import [java.io ByteArrayOutputStream File]
+           java.nio.charset.Charset
+           [java.nio.file CopyOption Files LinkOption Path]
+           [java.util.zip ZipEntry ZipOutputStream]))
 
 (extend-protocol io/Coercions
   Path
@@ -13,6 +17,14 @@
   [& args]
   (let [^File f (apply io/file args)]
     (.getCanonicalFile f)))
+
+(defn file?
+  [& args]
+  (.isFile (apply file args)))
+
+(defn directory?
+  [& args]
+  (.isDirectory (apply file args)))
 
 (defn ^String path
   [& args]
@@ -82,3 +94,37 @@
   (let [^File f (apply file args)]
     (when (.isDirectory f) (delete! f))
     (make-dir! f)))
+
+(defn encode-dirs-and-collections
+  [request {:keys [body] :as response}]
+  (or (and (instance? File body) (directory? body))
+      (m/encode-collections request response)))
+
+(defn file->zip-stream
+  [^File d os]
+  (with-open [zip-os (ZipOutputStream. os (Charset/forName "UTF-8"))]
+    (let [file->path (comp str (partial relativize-path d))]
+      (doseq [f (filter file? (file-seq d))]
+        (.putNextEntry zip-os (ZipEntry. (file->path f)))
+        (with-open [is (io/input-stream f)] (io/copy is zip-os))
+        (.closeEntry zip-os)))))
+
+(def zip-format
+  (m-format/map->Format
+   {:name "application/zip"
+    :encoder [(fn [_]
+                (reify
+                  m-format/EncodeToBytes
+                  (encode-to-bytes [_ f _]
+                    (let [buf (ByteArrayOutputStream.)]
+                      (file->zip-stream f buf)
+                      (.toByteArray buf)))
+                  m-format/EncodeToOutputStream
+                  (encode-to-output-stream [_ f _]
+                    (partial file->zip-stream f))))]}))
+
+(def muuntaja
+  (-> m/default-options
+      (assoc-in [:http :encode-response-body?] encode-dirs-and-collections)
+      (assoc-in [:formats "application/zip"] zip-format)
+      (m/create)))
