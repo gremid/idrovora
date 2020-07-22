@@ -17,12 +17,12 @@
   mount {:mvn/version "0.1.16"}
   juxt/dirwatch {:mvn/version "0.2.5"}
 
-  ;; Ring/HTTP
-  ;;metosin/muuntaja {:mvn/version "0.6.6"}
+  ;; Ring-based HTTP server
   metosin/reitit-core {:mvn/version "0.4.2"}
   metosin/reitit-ring {:mvn/version "0.4.2"}
   metosin/reitit-middleware {:mvn/version "0.4.2"}
   metosin/reitit-spec {:mvn/version "0.4.2"}
+  ring/ring-defaults {:mvn/version "0.3.2"}
   ring/ring-jetty-adapter {:mvn/version "1.8.0"}
 
   ;; XProc implementation
