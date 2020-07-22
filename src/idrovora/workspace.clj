@@ -1,110 +1,77 @@
 (ns idrovora.workspace
   (:require [clojure.core.async :as a]
-            [clojure.java.io :as io]
             [clojure.tools.logging :as log]
             [cronjure.core :as cron]
-            [cronjure.definitions :as crondef]
+            [idrovora.fs :as fs]
             [idrovora.xproc :as xproc]
             [juxt.dirwatch :refer [close-watcher watch-dir]]
             [mount.core :as mount :refer [defstate]])
-  (:import java.io.File
-           java.nio.file.Path
-           java.nio.file.LinkOption
-           com.cronutils.model.Cron))
+  (:import com.cronutils.model.Cron
+           java.io.File))
 
-(def ^:private no-link-options (make-array LinkOption 0))
+(defn ^File xpl-dir
+  []
+  (-> (mount/args) ::xpl-dir fs/file))
 
-(defn ^Path file-path
-  [^File f]
-  (let [^Path p (.toPath f)]
-    (if (.exists f) (.toRealPath p no-link-options) p)))
+(defn ^File job-dir
+  []
+  (-> (mount/args) ::job-dir fs/file))
 
-(defn ^String file-uri
-  [^File f]
-  (.. f (toURI) (toASCIIString)))
-
-(defn file-ancestors
-  [^File f]
-  (if f
-    (let [^File f (.getAbsoluteFile f)]
-      (lazy-seq (cons f (file-ancestors (.getParentFile f)))))))
-
-(defn file-descendants
-  [^File f]
-  (if (.isDirectory f)
-    (let [children (sort #(compare %2 %1) (.listFiles f))]
-      (lazy-cat (mapcat file-descendants children) children))))
-
-(defn file-ancestor?
-  [^File f ^File a]
-  (.startsWith (file-path f) (file-path a)))
-
-(defn jobs-changed?
-  [{:keys [^File file action]}]
-  (let [{:keys [::job-dir]} (mount/args)]
-    (and (#{:create :modify} action) (file-ancestor? file job-dir))))
-
-(defn job->status-change
-  [{:keys [^File job ^File file]}]
-  (let [[p1 p2] (map str (.relativize (file-path job) (file-path file)))]
-    (when (and (= "status" p1) (some? p2))
-      (keyword p2))))
-
-(defn job->pipeline
-  [^File job]
-  (let [^File xpl-dir (::xpl-dir (mount/args))
-        id (.. job (getParentFile) (getName))
-        pipeline (io/file xpl-dir (str id ".xpl"))]
-    (if (.isFile pipeline) pipeline)))
-
-(defn event->job
-  [{:keys [^File file action] :as evt}]
-  (let [^File job-dir (::job-dir (mount/args))
-        job-dir (.getAbsoluteFile job-dir)
-        [_ ^File job]
-        (->> (file-ancestors file)
-             (take-while (complement #{job-dir}))
-             (reverse))]
-    (when-let [pipeline (if job (job->pipeline job))]
-      (assoc evt :pipeline pipeline :job job))))
+(defn fs-event->job
+  [{:keys [file action] :as evt}]
+  (let [^File job-dir (job-dir)]
+    (if (fs/ancestor? job-dir file)
+      (let [[pipeline job p1 p2] (map str (fs/relativize-path job-dir file))]
+        (if (and pipeline job p2 (= "status" p1))
+          (let [^File xpl (fs/file (xpl-dir) (str pipeline ".xpl"))]
+            (if (.isFile xpl)
+              {:pipeline pipeline
+               :job job
+               :xpl xpl
+               :status (-> p2 str keyword)})))))))
 
 (defstate fs-events
-  :start (let [^File job-dir (::job-dir (mount/args))
-               ch (a/chan)]
-           (when-not (.isDirectory job-dir) (.mkdirs job-dir))
+  :start (let [^File job-dir (fs/make-dir! (job-dir))
+               ch (a/chan)
+               on-event (fn [evt] (a/>!! ch (merge evt (fs-event->job evt))))
+               watcher (watch-dir on-event job-dir)]
            (log/infof "Start watching '%s'" job-dir)
-           [ch (watch-dir (partial a/>!! ch) job-dir) job-dir])
-  :stop (let [[ch watcher job-dir] fs-events]
-          (log/infof "Stop watching '%s'" job-dir)
+           [ch watcher])
+  :stop (let [[ch watcher] fs-events]
+          (log/infof "Stop watching '%s'" (job-dir))
           (close-watcher watcher)
           (a/close! ch)))
 
+(def running-jobs
+  (atom {}))
+
 (defn run-job!
-  [{:keys [job pipeline]}]
-  (let [xpl (file-uri pipeline)
-        source (file-uri (io/file job "source"))
-        result (file-uri (io/file job "result"))
-        result-ready (io/file job "status" "result-ready")
-        job-failed (io/file job "status" "job-failed")
-        options {"source-dir" source "result-dir" result}]
+  [{:keys [pipeline job xpl]}]
+  (let [job-dir (fs/file (job-dir) pipeline job)
+        status (fs/file job-dir "status")
+        result-ready (fs/file status "result-ready")
+        job-failed (fs/file status "job-failed")]
     (try
-      (log/debugf "Running job %s" (str job))
-      (xproc/run-pipeline! xpl options)
+      (log/debugf "Running %s" [pipeline job])
+      (xproc/run-pipeline!
+       (fs/uri xpl)
+       {"source-dir" (fs/uri job-dir "source")
+        "result-dir" (fs/uri job-dir "result")})
+      (fs/delete! job-failed true)
       (spit result-ready "")
-      (log/debugf "Completed job %s" (str job))
+      (log/debugf "Completed %s" [pipeline job])
       (catch Throwable t
-        (log/warnf t "Error running job %s" (str job))
+        (log/warnf t "Error running %s" [pipeline job])
+        (fs/delete! result-ready true)
         (spit job-failed "")))))
 
 (defstate event-listener
   :start (a/go-loop []
            (let [[ch] fs-events]
              (when-let [evt (a/<! ch)]
-               (log/trace (str [(-> evt :action) (-> evt :file str)]))
-               (when (jobs-changed? evt)
-                 (when-let [job (event->job evt)]
-                   (when (= :source-ready (job->status-change job))
-                     (run-job! job))))
+               (condp = (evt :status)
+                 :source-ready (run-job! evt)
+                 (log/trace evt))
                (recur)))))
 
 (defstate cleanup-scheduler
