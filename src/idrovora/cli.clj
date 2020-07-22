@@ -1,24 +1,27 @@
 (ns idrovora.cli
   (:gen-class)
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.tools.cli :refer [parse-opts]]
+            [clojure.tools.logging :as log]
             [cronjure.core :as cron]
             [cronjure.definitions :as crondef]
             [idrovora.http :as http]
             [idrovora.workspace :as ws]
-            [mount.core :as mount]
-            [clojure.string :as str]
-            [clojure.tools.logging :as log])
-  (:import java.io.File
-           java.time.Duration
-           com.cronutils.model.Cron))
+            [mount.core :as mount])
+  (:import com.cronutils.model.Cron
+           java.time.Duration))
+
+(defn parse-cron
+  [s]
+  (cron/parse crondef/quartz s))
 
 (def defaults
-  {:idrovora.workspace/job-dir "workspace/jobs"
-   :idrovora.workspace/xpl-dir "workspace/xpl"
-   :idrovora.workspace/cleanup-schedule "0 1 0 * * ?"
-   :idrovora.workspace/job-max-age "PT168H"
-   :idrovora.http/http-port "3000"
+  {:idrovora.workspace/job-dir (io/file "workspace" "jobs")
+   :idrovora.workspace/xpl-dir (io/file "workspace" "xpl")
+   :idrovora.workspace/cleanup-schedule (parse-cron "0 1 0 * * ?")
+   :idrovora.workspace/job-max-age (Duration/parse "PT168H")
+   :idrovora.http/http-port 3000
    :idrovora.http/http-context-path ""})
 
 (defn cli-arg
@@ -31,7 +34,7 @@
          env (str/join "-" ["idrovora" k])
          env (-> env (str/replace #"-" "_") (str/upper-case))
          long-opt (str "--" k " $" env)
-         default-val (parse (or (System/getenv env) (defaults id)))
+         default-val (or (some-> env System/getenv parse) (defaults id))
          default-desc (condp instance? default-val
                         Cron (.asString ^Cron default-val)
                         (str default-val))]
@@ -60,7 +63,7 @@
    (cli-arg
     :idrovora.workspace/cleanup-schedule
     "Schedule for periodic cleanup of old jobs (cron expression)"
-    "-c" (partial cron/parse crondef/quartz))
+    "-c" parse-cron)
    (cli-arg
     :idrovora.workspace/job-max-age
     "Maximum age of jobs; older jobs are removed periodically"
