@@ -22,6 +22,6 @@
 
 (deftest placeholder
   (is (log/spy :debug (http/post "http://localhost:3000/copy/"
-                                 {:form-params {:document1 "<root/>"}
+                                 {:form-params {:document "<root/>"}
                                   :redirect-strategy :lax}))))
 
