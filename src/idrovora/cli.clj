@@ -108,10 +108,11 @@
 
 (defn start
   ([]
-   (start defaults))
+   (start {}))
   ([args]
    (log/info "Starting Idrovora")
    (->> args
+        (merge defaults)
         (mount/with-args)
         (mount/start))))
 

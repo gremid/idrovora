@@ -38,6 +38,12 @@ In order to build Idrovora, you need to install
 
 For running Idrovora, only the Java runtime environment is needed.
 
+### Test
+
+```plaintext
+$ clojure -A:test -m cognitect.test-runner
+```
+
 ### Build
 
 Compiling and packaging Idrovora in a JAR including all dependencies can be achieved via
