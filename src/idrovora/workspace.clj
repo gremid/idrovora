@@ -8,26 +8,30 @@
             [idrovora.xproc :as xproc]
             [juxt.dirwatch :refer [close-watcher watch-dir]]
             [mount.core :as mount :refer [defstate]]
-            [ring.util.response :as response])
-  (:import com.cronutils.model.Cron
-           java.io.File
-           java.nio.file.NoSuchFileException))
+            [ring.util.io :as ring-io]
+            [ring.util.response :as response]
+            [clojure.java.io :as io])
+  (:import com.cronutils.model.Cron))
 
 ;; ## Canonical file and directory locations in the workspace.
 
-(defn ^File xpl-dir
+(defn xpl-dir
   []
   (-> (mount/args) ::xpl-dir fs/file))
 
-(defn ^File pipeline-xpl
+(defn pipeline-xpl
   [pipeline]
   (fs/file (xpl-dir) (str pipeline ".xpl")))
 
-(defn ^File job-dir
+(defn pipeline-exists?
+  [pipeline]
+  (fs/file? (pipeline-xpl pipeline)))
+
+(defn job-dir
   ([] (-> (mount/args) ::job-dir fs/file))
   ([pipeline job] (fs/file (job-dir) pipeline job)))
 
-(defn ^File job-status-txt
+(defn job-status-txt
   [pipeline job status]
   (fs/file (job-dir pipeline job) "status" (str status ".txt")))
 
@@ -79,10 +83,6 @@
      (swap! running-jobs update pipeline dissoc job)
      (rf result req))))
 
-(defn log-exception
-  [tr]
-  (log/warn tr "Exception during job processing"))
-
 (def job-requests
   (a/chan))
 
@@ -94,31 +94,30 @@
      (comp remove-running-jobs (map run-job!) remove-finished-jobs)
      job-requests
      true
-     log-exception)
+     #(log/warn % "Exception during job execution"))
     ch))
 
 ;; ## Filesystem watcher (hot-folder mode)
 
-(defn fs-event->job-request
+(defn filter-fs-job-requests
   [rf]
   (fn
     ([] (rf))
     ([result] (rf result))
     ([result {:keys [file action] :as evt}]
-     (try
-       (let [^File job-dir (job-dir)]
-         (when (fs/ancestor? job-dir file)
-           (let [[pipeline job] (map str (fs/relativize-path job-dir file))]
-             (when (and pipeline job (fs/file? (pipeline-xpl pipeline)))
-               (let [source-ready (job-status-txt pipeline job "source-ready")]
-                 (when (= source-ready file)
-                   (rf result [pipeline job])))))))
-       ;; Deleted files cannot be augmented with job information
-       (catch NoSuchFileException e)))))
+     (let [job-dir (job-dir)]
+       (when (and (#{:create :modify} action) (fs/ancestor? job-dir file))
+         (let [[pipeline job] (map str (fs/relativize-path job-dir file))]
+           (when (and pipeline job (pipeline-exists? pipeline))
+             (let [source-ready (job-status-txt pipeline job "source-ready")]
+               (when (= source-ready file)
+                 (rf result [pipeline job]))))))))))
 
 (defstate fs-event-listener
-  :start (let [^File job-dir (fs/make-dir! (job-dir))
-               fs-requests (a/chan 1 fs-event->job-request log-exception)
+  :start (let [fs-requests (a/chan
+                            1 filter-fs-job-requests
+                            #(log/warn % "Error during FS event handling"))
+               job-dir (fs/make-dir! (job-dir))
                watcher (watch-dir (partial a/>!! fs-requests) job-dir)]
            (log/infof "Start watching '%s'" job-dir)
            (a/pipe fs-requests job-requests false)
@@ -145,52 +144,144 @@
   :stop
   (a/close! cleanup-scheduler))
 
+(defn wrap-pipeline-exists
+  [handler]
+  (fn [{{:keys [pipeline]} :path-params :as request} respond raise]
+    (if (pipeline-exists? pipeline)
+      (handler request respond raise)
+      (-> (response/not-found {:pipeline pipeline})
+          (respond)))))
+
+(defn file-param?
+  [[_ {:keys [tempfile]}]]
+  tempfile)
+
+(defn zip-file-param?
+  [[_ {:keys [content-type filename] :or {filename ""}} :as param]]
+  (and (file-param? param)
+       (or (= "application/zip" content-type)
+           (str/ends-with? filename ".zip"))))
+
+(defn string-param?
+  [[_ v]]
+  (string? v))
+
+(defn param-key->filename
+  [k]
+  (let [filename (name k)
+        has-ext? (str/last-index-of filename ".")]
+    (if has-ext? filename (str filename ".xml"))))
+
+(defn unzip-param
+  [source-dir [k {:keys [tempfile]}]]
+  (with-open [is (io/input-stream tempfile)]
+    (fs/zip-stream->dir source-dir is)))
+
+(defn copy-param
+  [source-dir [k {:keys [tempfile]}]]
+  (io/copy tempfile (fs/file source-dir (param-key->filename k))))
+
+(defn spit-param
+  [source-dir [k v]]
+  (spit (fs/file source-dir (param-key->filename k)) v :encoding "UTF-8"))
+
+(defn request->job
+  [{{:keys [pipeline]} :path-params params :params :as req}]
+  (let [job (str (java.util.UUID/randomUUID))
+        job-dir (fs/make-dir! (job-dir pipeline job))
+        source (fs/make-dir! job-dir "source")
+        result (fs/make-dir! job-dir "result")
+        status (fs/make-dir! job-dir "status")
+        file-params (filter file-param? params)
+        zip-file-params (filter zip-file-param? file-params)
+        file-params (remove zip-file-param? file-params)
+        string-params (filter string-param? params)]
+    (doseq [p zip-file-params] (unzip-param source p))
+    (doseq [p file-params] (copy-param source p))
+    (doseq [p string-params] (spit-param source p))
+    [pipeline job]))
+
+(defn add-job-headers
+  [resp [pipeline job]]
+  (-> resp
+      (response/header "X-Idrovora-Pipeline" pipeline)
+      (response/header "X-Idrovora-Job" job)))
+
+(defn job->redirect
+  [[pipeline job]]
+  (let [job-dir (job-dir pipeline job)
+        result-dir (fs/file job-dir "result")
+        result-files (fs/files result-dir)
+        single-result? (= 1 (count result-files))]
+    (if-not single-result?
+      (response/redirect (str/join "/" ["" pipeline job]))
+      (let [[result] result-files
+            result (fs/relativize-path job-dir result)]
+        (response/redirect (str/join "/" ["" pipeline job result]))))))
+
 (def job-results-pub
   (a/pub job-results #(subvec % 0 2)))
 
-(defn handle-pipeline-request
-  [{{{:keys [pipeline]} :path} :parameters :as req} respond _]
-  (let [job-id ["test" "82d11012-cf02-4ec0-b3c6-f9fe004de7b0"]
+(defn handle-job-request
+  [{{:keys [pipeline]} :path-params :as req} respond _]
+  (let [[pipeline job :as job-id] (request->job req)
         result-ch (a/chan)]
     (a/sub job-results-pub job-id result-ch)
     (a/go
       (try
-        (a/alt!
-          result-ch ([result] (respond (response/response {:result result})))
-          (a/timeout 30000) (respond (response/response {:error "Timeout"})))
+        (->
+         (a/alt!
+           result-ch
+           ([[_ _ result]]
+            (case result
+              :completed (job->redirect job-id)
+              :failed (-> (response/response {:pipeline pipeline :job job})
+                          (response/status 500))))
+           (a/timeout 30000)
+           (-> (response/response {:pipeline pipeline :job job})
+               (response/status 504)))
+         (add-job-headers job-id)
+         (respond))
         (finally
           (a/unsub job-results-pub job-id result-ch))))
     (a/>!! job-requests job-id)))
 
+(defn wrap-resource-exists
+  [handler]
+  (fn
+    [{{:keys [pipeline job path]} :path-params :as request} respond raise]
+    (let [job-dir (job-dir)
+          f (fs/file job-dir pipeline job path)]
+      (if (and (or (fs/directory? f) (fs/file? f)) (fs/ancestor? job-dir f))
+        (handler request respond raise)
+        (-> {:pipeline pipeline :job job :path path}
+            (response/not-found)
+            (respond))))))
+
 (defn handle-resource-request
-  [{{{:keys [pipeline job path]} :path} :parameters :as req} respond _]
-  (let [^File job-dir (job-dir)
-        ^File f (fs/file job-dir pipeline job path)
-        p (str/join "/" [pipeline job path])]
+  [{{:keys [pipeline job path]} :path-params} respond _]
+  (let [f (fs/file (job-dir) pipeline job path)]
     (->
      (cond
-       ;; we only deliver job resources
-       (not (fs/ancestor? job-dir f))
-       (response/bad-request p)
        ;; directories are always delivered as ZIP archives
        (fs/directory? f)
-       (-> (response/response f)
-           (assoc :muuntaja/content-type "application/zip"))
-       ;; files are delivered based on content negotiation
+       (-> (partial fs/dir->zip-stream f)
+           (ring-io/piped-input-stream)
+           (response/response)
+           (response/content-type "application/zip"))
+       ;; files are delivered as-is
        (fs/file? f)
-       (response/response f)
-       ;; fallback: HTTP-404
-       :else
-       (-> (response/not-found p)
-           (response/content-type "text/plain")))
+       (response/response f))
+     (add-job-headers [pipeline job])
      (respond))))
 
 (def handlers
   [""
    ["/:pipeline/"
-    {:handler handle-pipeline-request
+    {:handler handle-job-request
+     :middleware [wrap-pipeline-exists]
      :parameters {:path (s/keys :req-un [::pipeline])}}]
    ["/:pipeline/:job/*path"
     {:handler handle-resource-request
-     :parameters {:path (s/keys :req-un [::pipeline ::job ::path])}
-     :muuntaja fs/muuntaja}]])
+     :middleware [wrap-resource-exists]
+     :parameters {:path (s/keys :req-un [::pipeline ::job ::path])}}]])

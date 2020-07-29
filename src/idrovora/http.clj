@@ -4,8 +4,10 @@
             [mount.core :as mount :refer [defstate]]
             [muuntaja.core :as m]
             [reitit.coercion.spec :refer [coercion]]
+            [reitit.middleware :as middleware]
             [reitit.ring :as ring]
             [reitit.ring.coercion :as coercion]
+            [reitit.ring.middleware.dev :as dev]
             [reitit.ring.middleware.exception :as exception]
             [reitit.ring.middleware.muuntaja :as muuntaja]
             [ring.middleware.defaults :as defaults]))
@@ -28,13 +30,15 @@
                   (assoc-in [:proxy] true)
                   (assoc-in [:session] false)
                   (assoc-in [:cookies] false)
-                  (assoc-in [:security :ssl-redirect] false)))}
+                  (assoc-in [:security :ssl-redirect] false)
+                  (assoc-in [:security :anti-forgery] false)))}
    muuntaja/format-negotiate-middleware
+   muuntaja/format-request-middleware
    muuntaja/format-response-middleware
    exception-middleware
-   muuntaja/format-request-middleware
-   coercion/coerce-response-middleware
-   coercion/coerce-request-middleware])
+   coercion/coerce-exceptions-middleware
+   coercion/coerce-request-middleware
+   coercion/coerce-response-middleware])
 
 (defn create-handler
   [context-path]
@@ -44,7 +48,8 @@
      {:coercion coercion
       :muuntaja m/instance
       :middleware middleware}
-     ws/handlers])
+     ws/handlers]
+    #_{::middleware/transform dev/print-request-diffs})
    (ring/routes
     (ring/redirect-trailing-slash-handler)
     (ring/create-default-handler))))

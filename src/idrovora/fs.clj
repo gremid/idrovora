@@ -1,12 +1,11 @@
 (ns idrovora.fs
   (:refer-clojure :exclude [ancestors descendants])
   (:require [clojure.java.io :as io]
-            [muuntaja.core :as m]
-            [muuntaja.format.core :as m-format])
-  (:import [java.io ByteArrayOutputStream File]
+            [clojure.tools.logging :as log])
+  (:import [java.io File InputStream OutputStream]
            java.nio.charset.Charset
            [java.nio.file CopyOption Files LinkOption Path]
-           [java.util.zip ZipEntry ZipOutputStream]))
+           [java.util.zip ZipEntry ZipInputStream ZipOutputStream]))
 
 (extend-protocol io/Coercions
   Path
@@ -26,6 +25,13 @@
   [& args]
   (.isDirectory (apply file args)))
 
+(defn files
+  [& args]
+  (->> (apply file args)
+       (file-seq)
+       (filter file?)
+       (map file)))
+
 (defn ^String path
   [& args]
   (.getPath (apply file args)))
@@ -43,12 +49,12 @@
     (if (.exists f) (.toRealPath p no-link-options) p)))
 
 (defn ^Path resolve-path
-  [base ^Path p]
+  [base ^String p]
   (.resolve (file-path base) p))
 
 (defn ^Path relativize-path
-  [base f]
-  (.relativize (file-path base) (file-path f)))
+  [base & args]
+  (.relativize (file-path base) (apply file-path args)))
 
 (defn ancestors
   [& args]
@@ -83,6 +89,13 @@
     (doseq [^File c (.listFiles f)] (delete! c)))
   (io/delete-file f silently))
 
+(def ^:private temp-dir-attrs
+  (make-array java.nio.file.attribute.FileAttribute 0))
+
+(defn make-temp-dir!
+  [^String prefix]
+  (file (java.nio.file.Files/createTempDirectory prefix temp-dir-attrs)))
+
 (defn make-dir!
   [& args]
   (let [^File f (apply file args)]
@@ -95,36 +108,23 @@
     (when (.isDirectory f) (delete! f))
     (make-dir! f)))
 
-(defn encode-dirs-and-collections
-  [request {:keys [body] :as response}]
-  (or (and (instance? File body) (directory? body))
-      (m/encode-collections request response)))
-
-(defn file->zip-stream
-  [^File d os]
+(defn dir->zip-stream
+  [d ^OutputStream os]
   (with-open [zip-os (ZipOutputStream. os (Charset/forName "UTF-8"))]
     (let [file->path (comp str (partial relativize-path d))]
-      (doseq [f (filter file? (file-seq d))]
+      (doseq [f (files d)]
         (.putNextEntry zip-os (ZipEntry. (file->path f)))
         (with-open [is (io/input-stream f)] (io/copy is zip-os))
         (.closeEntry zip-os)))))
 
-(def zip-format
-  (m-format/map->Format
-   {:name "application/zip"
-    :encoder [(fn [_]
-                (reify
-                  m-format/EncodeToBytes
-                  (encode-to-bytes [_ f _]
-                    (let [buf (ByteArrayOutputStream.)]
-                      (file->zip-stream f buf)
-                      (.toByteArray buf)))
-                  m-format/EncodeToOutputStream
-                  (encode-to-output-stream [_ f _]
-                    (partial file->zip-stream f))))]}))
-
-(def muuntaja
-  (-> m/default-options
-      (assoc-in [:http :encode-response-body?] encode-dirs-and-collections)
-      (assoc-in [:formats "application/zip"] zip-format)
-      (m/create)))
+(defn zip-stream->dir
+  [d ^InputStream is]
+  (with-open [zip-is (ZipInputStream. is (Charset/forName "UTF-8"))]
+    (loop []
+      (when-let [^ZipEntry e (.getNextEntry zip-is)]
+        (when-not (.isDirectory e)
+          (let [^File f (file (resolve-path d (.getName e)))]
+            (log/debugf "%s -> %s" e f)
+            (make-dir! (.getParentFile f))
+            (io/copy zip-is f)))
+        (recur)))))
