@@ -46,13 +46,13 @@ container in which case nothing is needed except a Docker installation.
 ### Build Docker container
     
 ```plaintext
-$ docker build -t gremid/idrovora .
+$ make
 ```
 
 ### Test
 
 ```plaintext
-$ clojure -A:test -m cognitect.test-runner
+$ make test
 ```
 
 ### Develop and Run
