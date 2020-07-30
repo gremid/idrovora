@@ -1,4 +1,4 @@
-# Idrovora - A pump station for your XProc pipelines
+# idrovora - A pump station for your XProc pipelines
 
 _This is work in progress!_
 
