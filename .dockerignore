@@ -1,0 +1,14 @@
+Dockerfile
+.dockerignore
+
+.git/
+.gitignore
+
+.dir-locals.el
+
+.cpcache/
+.nrepl-port
+
+classes/
+dist/
+workspace/

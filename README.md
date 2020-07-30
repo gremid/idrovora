@@ -31,12 +31,19 @@ interface based on HTTP and the local filesystem.
 
 ### Prerequisites
 
-In order to build Idrovora, you need to install
+In order to build, test and run Idrovora, you need to install
 
 * [Java v8](https://jdk.java.net/)
 * [Clojure v1.10](https://clojure.org/guides/getting_started)
 
-For running Idrovora, only the Java runtime environment is needed.
+Alternatively you can run Idrovora within a [Docker](https://www.docker.com/)
+container in which case nothing is needed except a Docker installation.
+
+### Build Docker container
+    
+```plaintext
+$ docker build -t gremid/idrovora .
+```
 
 ### Test
 
@@ -44,29 +51,16 @@ For running Idrovora, only the Java runtime environment is needed.
 $ clojure -A:test -m cognitect.test-runner
 ```
 
-### Build
-
-Compiling and packaging Idrovora in a JAR including all dependencies can be achieved via
-    
-```plaintext
-$ (cd dist && clojure -m build && docker build -t gremid/idrovora .)
-```
-
-When successfully run, you should find the resulting JAR file in `dist/`.
-
-### Run
-
-The built JAR file can be executed. In order to get help on the available
-options, execute the following:
+### Develop and Run
 
 ```
-$ java -jar dist/idrovora.jar --help
+$ clojure -m idrovora.cli --help
 Idrovora - A pump station for your XProc pipelines
 Copyright (C) 2020 Gregor Middell
 
 See <https://github.com/gremid/idrovora> for more information.
 
-Usage: java -jar idrovora.jar [OPTION]...
+Usage: clojure -m idrovora.cli [OPTION]...
 
 Options:
   -x, --xpl-dir $IDROVORA_XPL_DIR           workspace/xpl   source directory with XProc pipeline definitions
@@ -83,7 +77,7 @@ directory and running an HTTP server on port 3000, simply execute the JAR
 without any arguments:
 
 ```
-$ java -jar idrovora.jar
+$ clojure -m idrovora.cli
 2020-03-09 14:52:51 [main       | INFO  | idrovora.cli        ] Starting Idrovora
 2020-03-09 14:52:51 [main       | INFO  | idrovora.http       ] Starting HTTP server at 3000/tcp
 2020-03-09 14:52:51 [main       | INFO  | idrovora.workspace  ] Start watching 'workspace/jobs'

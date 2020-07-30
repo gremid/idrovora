@@ -76,7 +76,7 @@
         ""
         "See <https://github.com/gremid/idrovora> for more information."
         ""
-        "Usage: java -jar idrovora.jar [OPTION]..."
+        "Usage: clojure -m idrovora.cli [OPTION]..."
         ""
         "Options:"
         options-summary
