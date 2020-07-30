@@ -1,7 +1,8 @@
 # idrovora - A pump station for your XProc pipelines
 
-[![](https://images.microbadger.com/badges/image/gremid/idrovora.svg)](https://hub.docker.com/r/gremid/idrovora)
 [![](https://images.microbadger.com/badges/version/gremid/idrovora.svg)](https://hub.docker.com/r/gremid/idrovora)
+[![](https://images.microbadger.com/badges/image/gremid/idrovora.svg)](https://hub.docker.com/r/gremid/idrovora)
+[![](https://img.shields.io/github/license/gremid/idrovora)](https://github.com/gremid/idrovora)
 
 _This is work in progress!_
 
