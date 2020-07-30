@@ -1,5 +1,8 @@
 # idrovora - A pump station for your XProc pipelines
 
+[![](https://images.microbadger.com/badges/image/gremid/idrovora.svg)](https://hub.docker.com/r/gremid/idrovora)
+[![](https://images.microbadger.com/badges/version/gremid/idrovora.svg)](https://hub.docker.com/r/gremid/idrovora)
+
 _This is work in progress!_
 
 <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Tubi_di_deflusso_dell%27idrovora.jpg/320px-Tubi_di_deflusso_dell%27idrovora.jpg"
