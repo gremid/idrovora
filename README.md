@@ -1,11 +1,11 @@
 # Idrovora - A pump station for your XProc pipelines
 
-<img src="doc/idrovora.png"
+_This is work in progress!_
+
+<img src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/ae/Tubi_di_deflusso_dell%27idrovora.jpg/320px-Tubi_di_deflusso_dell%27idrovora.jpg"
      title="Idrovora by Marianna57 / Wikimedia Commons / CC-BY-SA-4.0"
      alt="Idrovora by Marianna57 / Wikimedia Commons / CC-BY-SA-4.0"
      align="right">
-
-_This is work in progress!_
 
 [XProc](https://www.w3.org/TR/xproc/) is a versatile language to describe
 XML-based processing pipelines. With [XML Calabash](http://xmlcalabash.com/) and
