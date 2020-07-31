@@ -9,6 +9,7 @@
             [idrovora.xproc :as xproc]
             [mount.core :as mount :refer [defstate]]
             [muuntaja.core :as m]
+            [reitit.core :as r]
             [reitit.coercion.spec :as rcs]
             [reitit.ring :as ring]
             [reitit.ring.coercion :as coercion]
@@ -16,14 +17,11 @@
             [reitit.ring.middleware.muuntaja :as muuntaja]
             [ring.middleware.defaults :as defaults]
             [ring.util.io :as ring-io]
+            [ring.util.request :as request]
             [ring.util.response :as response])
-  (:import java.util.UUID))
-
-(def ^:private configured-doc-root
-  (delay (some-> (mount/args) :http-doc-root fs/make-dir!)))
-
-(def doc-root
-  (atom nil))
+  (:import java.util.UUID
+           java.net.URL
+           java.io.File))
 
 (defn wrap-job-coordinates
   [handler]
@@ -40,34 +38,61 @@
           j (response/header "X-Idrovora-Job" j))))
      raise)))
 
-(defn wrap-resource-exists
-  [handler]
-  (fn
-    [request respond raise]
-    (let [{:keys [::pipeline ::job] {:keys [path]} :path-params} request
-          doc-root @doc-root
-          f (fs/file doc-root pipeline job path)]
-      (if (and (or (fs/directory? f) (fs/file? f)) (fs/ancestor? doc-root f))
-        (handler request respond raise)
-        (-> {:pipeline pipeline :job job :path path}
-            (response/not-found)
-            (respond))))))
+(defn absolute-url
+  [request url]
+  (str (URL. (URL. (request/request-url request)) url)))
 
-(defn handle-resource-request
+(defn self-url
+  [request]
+  (request/request-url request))
+
+(defn pipeline-url
+  [{:keys [::r/router] :as request} pipeline]
+  (->>
+   {:pipeline pipeline}
+   (r/match-by-name router ::job-request)
+   (r/match->path)
+   (absolute-url request)))
+
+(defn job-url
+  [{:keys [::r/router] :as request} pipeline job]
+  (->>
+   {:pipeline pipeline :job job :path ""}
+   (r/match-by-name router ::resource-request)
+   (r/match->path)
+   (absolute-url request)))
+
+(defn wrap-links
+  [handler]
+  (fn [{:keys [::pipeline ::job] :as request} respond raise]
+    (handler
+     request
+     (fn [{body :body p ::pipeline j ::job :or {p pipeline j job} :as resp}]
+       (respond
+        (if-not (map? body)
+          resp
+          (->>
+           (merge {:self {:href (self-url request)}}
+                  (when p {:pipeline {:href (pipeline-url request p)}})
+                  (when j {:job {:href (job-url request p j)}}))
+           (assoc-in resp [:body :_links])))))
+     raise)))
+
+(defn pipeline-names
+  []
+  (->>
+   (:dirs (mount/args))
+   (mapcat fs/dir-contents) (filter fs/file?) (map fs/file-name)
+   (filter #(str/ends-with? % ".xpl")) (map #(str/replace % #"\.xpl$" ""))))
+
+(defn handle-index-request
   [request respond _]
-  (let [{:keys [::pipeline ::job] {:keys [path]} :path-params} request
-        f (fs/file @doc-root pipeline job path)]
-    (respond
-     (cond
-       ;; directories are always delivered as ZIP archives
-       (fs/directory? f)
-       (-> (partial fs/dir->zip-stream f)
-           (ring-io/piped-input-stream)
-           (response/response)
-           (response/content-type "application/zip"))
-       ;; files are delivered as-is
-       (fs/file? f)
-       (response/response f)))))
+  (->>
+   (for [p (pipeline-names)]
+     {:id p :_links {:self {:href (pipeline-url request p)}}})
+   (assoc-in {} [:_embedded :pipelines])
+   (response/response)
+   (respond)))
 
 (defn xpl-file
   [pipeline]
@@ -84,6 +109,12 @@
       (handler (assoc request ::xproc/xpl xpl) respond raise)
       (-> (response/not-found {:pipeline pipeline})
           (respond)))))
+
+(def ^:private configured-doc-root
+  (delay (some-> (mount/args) :http-doc-root fs/make-dir!)))
+
+(def doc-root
+  (atom nil))
 
 (defn file-param?
   [[_ {:keys [tempfile]}]]
@@ -149,25 +180,68 @@
         (let [{:keys [::xproc/error] :as result} (a/<! result)]
           (respond
            (if-not error
-             (->
-              (str/join "/" ["" pipeline job ""])
-              (response/created {:pipeline pipeline :job job}))
+             (response/created (job-url request pipeline job) {})
              (->
               {:error (-> error print-stack-trace with-out-str)}
-              (assoc :pipeline pipeline :job job)
               (response/response)
               (response/status 502)))))
           (finally (unsubscribe))))))
 
+(defn wrap-resource-exists
+  [handler]
+  (fn
+    [request respond raise]
+    (let [{:keys [::pipeline ::job] {:keys [path]} :path-params} request
+          doc-root @doc-root
+          f (fs/file doc-root pipeline job path)]
+      (if (and (or (fs/directory? f) (fs/file? f)) (fs/ancestor? doc-root f))
+        (handler (assoc request ::file f) respond raise)
+        (-> {}
+            (response/not-found)
+            (respond))))))
+
+(defn handle-resource-request
+  [{^File f ::file :as request} respond _]
+  (respond
+   (cond
+     ;; files are delivered as-is
+     (fs/file? f)
+     (response/response f)
+     ;; a directory's representation can be negotiated
+     (fs/directory? f)
+     (cond
+       ;; directories can be delivered as ZIP archives, if requested
+       (some-> (m/get-response-format-and-charset request)
+               :raw-format #{"application/zip"})
+       (-> (partial fs/dir->zip-stream f)
+           (ring-io/piped-input-stream)
+           (response/response)
+           (response/content-type "application/zip"))
+       ;; otherwise return directory listing
+       :else
+       (->>
+        (for [c (fs/dir-contents f)
+              :let [n (str (fs/file-name c) (if (fs/directory? c) "/" ""))]]
+          {:id n :_links {:self (absolute-url request n)}})
+        (assoc-in {} [:_embedded :resources])
+        (response/response)))
+     ;; fallback
+     :else (response/not-found {}))))
+
 (def handlers
   [""
-   {:middleware [wrap-job-coordinates]}
+   {:middleware [wrap-job-coordinates wrap-links]}
+   ["/"
+    {:name ::index-request
+     :handler handle-index-request}]
    ["/:pipeline/"
-    {:handler handle-job-request
+    {:name ::job-request
+     :handler handle-job-request
      :middleware [wrap-assoc-xpl wrap-assoc-job]
      :parameters {:path (s/keys :req-un [::pipeline])}}]
    ["/:pipeline/:job/*path"
-    {:handler handle-resource-request
+    {:name ::resource-request
+     :handler handle-resource-request
      :middleware [wrap-resource-exists]
      :parameters {:path (s/keys :req-un [::pipeline ::job ::path])}}]])
 

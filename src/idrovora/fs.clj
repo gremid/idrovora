@@ -32,6 +32,14 @@
        (filter file?)
        (map file)))
 
+(defn dir-contents
+  [& args]
+  (.listFiles ^File (apply file args)))
+
+(defn file-name
+  [^File f]
+  (.getName f))
+
 (defn ^String path
   [& args]
   (.getPath (apply file args)))
