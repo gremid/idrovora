@@ -220,7 +220,7 @@
          #_(do
            (require 'reitit.ring.middleware.dev)
            {:reitit.middleware/transform
-            reitit.ring.middleware.dev/print-request-diffs}))
+            (ns-resolve 'reitit.ring.middleware.dev 'print-request-diffs)}))
         (ring/routes
          (ring/redirect-trailing-slash-handler)
          (ring/create-default-handler)))
