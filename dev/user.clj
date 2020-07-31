@@ -7,7 +7,7 @@
 
 (defn start
   []
-  (cli/start))
+  (cli/start {:http 3000} "text/xpl"))
 
 (defn stop
   []

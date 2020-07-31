@@ -1,12 +1,12 @@
 (ns idrovora.xproc
+  (:require [clojure.core.async :as a]
+            [clojure.tools.logging :as log]
+            [idrovora.fs :as fs])
   (:import [com.xmlcalabash.core XProcConfiguration XProcRuntime]
            com.xmlcalabash.model.RuntimeValue
            com.xmlcalabash.runtime.XPipeline
            com.xmlcalabash.util.Input
-           net.sf.saxon.s9api.QName)
-  (:require [clojure.tools.logging :as log]
-            [idrovora.fs :as fs]
-            [clojure.core.async :as a]))
+           net.sf.saxon.s9api.QName))
 
 (def config
   (delay (XProcConfiguration.)))

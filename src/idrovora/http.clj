@@ -19,9 +19,11 @@
             [ring.util.response :as response])
   (:import java.util.UUID))
 
+(def ^:private configured-doc-root
+  (delay (some-> (mount/args) :http-doc-root fs/make-dir!)))
+
 (def doc-root
-  (delay (or (some-> (mount/args) :http-doc-root fs/make-dir!)
-             (fs/make-temp-dir! "idrovora-http-"))))
+  (atom nil))
 
 (defn wrap-job-coordinates
   [handler]
@@ -91,7 +93,7 @@
   [[_ {:keys [content-type filename] :or {filename ""}} :as param]]
   (and (file-param? param)
        (or (= "application/zip" content-type)
-           (str/ends-with? filename ".zip"))))
+           (-> filename str/lower-case (str/ends-with? ".zip")))))
 
 (defn string-param?
   [[_ v]]
@@ -120,19 +122,24 @@
   [handler]
   (fn
     [{:keys [::pipeline :params] :as request} respond raise]
-    (let [job (str (UUID/randomUUID))
-          job-dir (fs/make-dir! @doc-root pipeline job)
-          file-params (filter file-param? params)
-          zip-file-params (filter zip-file-param? file-params)
-          file-params (remove zip-file-param? file-params)
-          string-params (filter string-param? params)]
-      (doseq [p zip-file-params] (unzip-param job-dir p))
-      (doseq [p file-params] (copy-param job-dir p))
-      (doseq [p string-params] (spit-param job-dir p))
-      (handler
-       (assoc request ::job job ::xproc/job-dir job-dir)
-       #(respond (assoc % ::job job))
-       raise))))
+    (try
+      (let [job (str (UUID/randomUUID))
+            job-dir (fs/make-dir! @doc-root pipeline job)
+            file-params (filter file-param? params)
+            zip-file-params (filter zip-file-param? file-params)
+            file-params (remove zip-file-param? file-params)
+            string-params (filter string-param? params)]
+        (doseq [p zip-file-params] (unzip-param job-dir p))
+        (doseq [p file-params] (copy-param job-dir p))
+        (doseq [p string-params] (spit-param job-dir p))
+        (handler
+         (assoc request ::job job ::xproc/job-dir job-dir)
+         #(respond (assoc % ::job job))
+         raise))
+      (catch Throwable t
+        (log/debugf t "Error parsing job request for pipeline %s" pipeline)
+        (-> (response/bad-request {:pipeline pipeline})
+            (respond))))))
 
 (defn handle-job-request
   [{:keys [::pipeline ::job] :as request} respond _]
@@ -197,9 +204,12 @@
 (defstate server
   :start
   (when-let [http-port (:http (mount/args))]
-    (let [http-context-path (or (:http-context-path (mount/args)) "")]
-      (log/infof "Starting HTTP server at %s/tcp ('%s' -> '%s')"
-                 http-port
+    (let [http-context-path (or (:http-context-path (mount/args)) "")
+          http-doc-root (reset! doc-root
+                                (or @configured-doc-root
+                                    (fs/make-temp-dir! "idrovora-http-")))]
+      (log/infof "Starting HTTP server at %s/tcp" http-port)
+      (log/infof "Serving HTTP docs at '%s' from '%s'"
                  (str/replace (str "/" http-context-path) #"^/+" "/")
                  (str @doc-root))
       (require 'ring.adapter.jetty)
@@ -218,4 +228,7 @@
   :stop
   (when server
     (.stop server)
-    (log/infof "Stopped HTTP server")))
+    (log/infof "Stopped HTTP server")
+    (when-not @configured-doc-root
+      (fs/delete! @doc-root true)
+      (log/debugf "Removed temporary HTTP docs %s" @doc-root))))
