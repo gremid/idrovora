@@ -9,8 +9,8 @@
             [idrovora.xproc :as xproc]
             [mount.core :as mount :refer [defstate]]
             [muuntaja.core :as m]
-            [reitit.core :as r]
             [reitit.coercion.spec :as rcs]
+            [reitit.core :as r]
             [reitit.ring :as ring]
             [reitit.ring.coercion :as coercion]
             [reitit.ring.middleware.exception :as exception]
@@ -19,9 +19,10 @@
             [ring.util.io :as ring-io]
             [ring.util.request :as request]
             [ring.util.response :as response])
-  (:import java.util.UUID
+  (:import java.io.File
            java.net.URL
-           java.io.File))
+           java.time.Instant
+           java.util.UUID))
 
 (defn wrap-job-coordinates
   [handler]
@@ -46,6 +47,13 @@
   [request]
   (request/request-url request))
 
+(defn index-url
+  [{:keys [::r/router] :as request}]
+  (->>
+   (r/match-by-name router ::index-request)
+   (r/match->path)
+   (absolute-url request)))
+
 (defn pipeline-url
   [{:keys [::r/router] :as request} pipeline]
   (->>
@@ -62,19 +70,25 @@
    (r/match->path)
    (absolute-url request)))
 
+(defn link
+  ([href] (link href :self))
+  ([href rel] {rel {:href href}}))
+
 (defn wrap-links
   [handler]
   (fn [{:keys [::pipeline ::job] :as request} respond raise]
     (handler
      request
-     (fn [{body :body p ::pipeline j ::job :or {p pipeline j job} :as resp}]
+     (fn [{:keys [body status] p ::pipeline j ::job
+           :or {p pipeline j job} :as resp}]
        (respond
-        (if-not (map? body)
+        (if-not (and (map? body) (< status 400))
           resp
           (->>
-           (merge {:self {:href (self-url request)}}
-                  (when p {:pipeline {:href (pipeline-url request p)}})
-                  (when j {:job {:href (job-url request p j)}}))
+           (merge (link (self-url request))
+                  (link (index-url request) :index)
+                  (when p (link (pipeline-url request p) :pipeline))
+                  (when j (link (job-url request p j) :job)))
            (assoc-in resp [:body :_links])))))
      raise)))
 
@@ -88,8 +102,7 @@
 (defn handle-index-request
   [request respond _]
   (->>
-   (for [p (pipeline-names)]
-     {:id p :_links {:self {:href (pipeline-url request p)}}})
+   (for [p (pipeline-names)] {:id p :_links (link (pipeline-url request p))})
    (assoc-in {} [:_embedded :pipelines])
    (response/response)
    (respond)))
@@ -115,6 +128,27 @@
 
 (def doc-root
   (atom nil))
+
+(defn resource
+  [f]
+  {:id (fs/file-name f)
+   :modified (-> f fs/last-modified Instant/ofEpochMilli)})
+
+(defn job-dirs
+  [pipeline]
+  (->> (fs/dir-contents @doc-root pipeline) (filter fs/directory?)))
+
+
+(defn handle-pipeline-request
+  [{:keys [::pipeline] :as request} respond _]
+  (let [jobs (->> (map resource (job-dirs pipeline))
+                  (sort-by :modified #(compare %2 %1)))]
+    (->>
+     (for [{:keys [id] :as job} (take 100 jobs)]
+       (assoc job :_links (link (absolute-url request (str id "/")))))
+     (assoc-in {:id pipeline :total_jobs (count jobs)} [:_embedded :jobs])
+     (response/response)
+     (respond))))
 
 (defn file-param?
   [[_ {:keys [tempfile]}]]
@@ -173,14 +207,14 @@
             (respond))))))
 
 (defn handle-job-request
-  [{:keys [::pipeline ::job] :as request} respond _]
+  [{:keys [::pipeline ::job ::xproc/job-dir] :as request} respond _]
   (let [{:keys [::xproc/result ::xproc/unsubscribe]} (xproc/submit-job request)]
     (a/go
       (try
         (let [{:keys [::xproc/error] :as result} (a/<! result)]
           (respond
            (if-not error
-             (response/created (job-url request pipeline job) {})
+             (response/created (job-url request pipeline job) (resource job-dir))
              (->
               {:error (-> error print-stack-trace with-out-str)}
               (response/response)
@@ -220,9 +254,9 @@
        ;; otherwise return directory listing
        :else
        (->>
-        (for [c (fs/dir-contents f)
-              :let [n (str (fs/file-name c) (if (fs/directory? c) "/" ""))]]
-          {:id n :_links {:self (absolute-url request n)}})
+        (for [c (fs/dir-contents f)]
+          (let [n (str (fs/file-name c) (if (fs/directory? c) "/" ""))]
+            (assoc (resource c) :_links (link (absolute-url request n)))))
         (assoc-in {} [:_embedded :resources])
         (response/response)))
      ;; fallback
@@ -236,9 +270,11 @@
      :handler handle-index-request}]
    ["/:pipeline/"
     {:name ::job-request
-     :handler handle-job-request
-     :middleware [wrap-assoc-xpl wrap-assoc-job]
-     :parameters {:path (s/keys :req-un [::pipeline])}}]
+     :handler handle-pipeline-request
+     :middleware [wrap-assoc-xpl]
+     :parameters {:path (s/keys :req-un [::pipeline])}
+     :post {:handler handle-job-request
+            :middleware [wrap-assoc-job]}}]
    ["/:pipeline/:job/*path"
     {:name ::resource-request
      :handler handle-resource-request

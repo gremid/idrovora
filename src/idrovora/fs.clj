@@ -40,6 +40,10 @@
   [^File f]
   (.getName f))
 
+(defn last-modified
+  [& args]
+  (.lastModified ^File (apply file args)))
+
 (defn ^String path
   [& args]
   (.getPath (apply file args)))
