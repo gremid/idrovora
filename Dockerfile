@@ -1,4 +1,4 @@
-FROM clojure:tools-deps
+FROM clojure:openjdk-15-tools-deps
 
 ARG BUILD_DATE
 ARG VCS_REF
