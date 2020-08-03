@@ -8,16 +8,18 @@
 (defn cli-fixture
   [f]
   (try
-    (cli/start {:http 3000} "test/xpl")
+    (cli/start {:http 3000 :http-context-path "/xproc"} "test/xpl")
     (f)
     (finally
       (cli/stop))))
 
 (use-fixtures :once cli-fixture)
 
-(deftest placeholder
-  (is (->>
-       {:form-params {:input "<root/>"}}
-       (http/post "http://localhost:3000/copy/")
-       (log/spy :debug))))
+(deftest create-and-remove-job
+  (is
+   (as-> {:input "<root/>"} $
+     (assoc {:accept :edn :as :clojure} :form-params $)
+     (http/post "http://localhost:3000/xproc/copy/" $)
+     (get-in $ [:body :_links :job :href])
+     (http/delete $ {:accept :edn :as :clojure}))))
 

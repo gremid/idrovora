@@ -7,7 +7,7 @@
 
 (defn start
   []
-  (cli/start {:http 3000} "test/xpl"))
+  (cli/start {:http 3000 :http-context-path "/xproc"} "test/xpl"))
 
 (defn stop
   []

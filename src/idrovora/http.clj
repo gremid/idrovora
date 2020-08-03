@@ -24,20 +24,36 @@
            java.time.Instant
            java.util.UUID))
 
+(def ^:private configured-doc-root
+  (delay (some-> (mount/args) :http-doc-root fs/make-dir!)))
+
+(def doc-root
+  (atom nil))
+
 (defn wrap-job-coordinates
   [handler]
   (fn
-    [{{:keys [pipeline job]} :path-params :as request} respond raise]
-    (handler
-     (merge request
-            (when pipeline {::pipeline pipeline})
-            (when job {::job job}))
-     (fn [{p ::pipeline j ::job :or {p pipeline j job} :as resp}]
-       (respond
-        (cond-> resp
-          p (response/header "X-Idrovora-Pipeline" p)
-          j (response/header "X-Idrovora-Job" j))))
-     raise)))
+    [{{:keys [pipeline job path]} :path-params :as request} respond raise]
+    (let [request (assoc request ::pipeline pipeline ::job job ::path path)]
+      (handler
+       request
+       (fn [response]
+         (let [{:keys [::pipeline ::job]} (merge request response)]
+           (respond
+            (cond-> response
+              pipeline (response/header "X-Idrovora-Pipeline" pipeline)
+              job (response/header "X-Idrovora-Job" job)))))
+       raise))))
+
+(defn wrap-resource
+  [handler]
+  (fn
+    [{:keys [::pipeline ::job ::path] :as request} respond raise]
+    (let [doc-root @doc-root
+          f (apply fs/file (remove nil? [doc-root pipeline job path]))]
+      (if (fs/ancestor? doc-root f)
+        (handler (assoc request ::file f) respond raise)
+        (respond (response/not-found {}))))))
 
 (defn absolute-url
   [request url]
@@ -115,7 +131,7 @@
    (filter fs/file?)
    (first)))
 
-(defn wrap-assoc-xpl
+(defn wrap-xpl
   [handler]
   (fn [{:keys [::pipeline] :as request} respond raise]
     (if-let [xpl (xpl-file pipeline)]
@@ -123,16 +139,10 @@
       (-> (response/not-found {:pipeline pipeline})
           (respond)))))
 
-(def ^:private configured-doc-root
-  (delay (some-> (mount/args) :http-doc-root fs/make-dir!)))
-
-(def doc-root
-  (atom nil))
-
 (defn resource
   [f]
   {:id (fs/file-name f)
-   :modified (-> f fs/last-modified Instant/ofEpochMilli)})
+   :modified (-> f fs/last-modified Instant/ofEpochMilli str)})
 
 (defn job-dirs
   [pipeline]
@@ -183,7 +193,7 @@
   [source-dir [k v]]
   (spit (fs/file source-dir (param-key->filename k)) v :encoding "UTF-8"))
 
-(defn wrap-assoc-job
+(defn wrap-job
   [handler]
   (fn
     [{:keys [::pipeline :params] :as request} respond raise]
@@ -221,19 +231,6 @@
               (response/status 502)))))
           (finally (unsubscribe))))))
 
-(defn wrap-resource-exists
-  [handler]
-  (fn
-    [request respond raise]
-    (let [{:keys [::pipeline ::job] {:keys [path]} :path-params} request
-          doc-root @doc-root
-          f (fs/file doc-root pipeline job path)]
-      (if (and (or (fs/directory? f) (fs/file? f)) (fs/ancestor? doc-root f))
-        (handler (assoc request ::file f) respond raise)
-        (-> {}
-            (response/not-found)
-            (respond))))))
-
 (defn handle-resource-request
   [{^File f ::file :as request} respond _]
   (respond
@@ -262,24 +259,31 @@
      ;; fallback
      :else (response/not-found {}))))
 
+(defn handle-job-removal
+  [{^File f ::file :keys [::pipeline ::job ::path] :as request} respond _]
+  (respond
+   (if (and pipeline job (empty? path) (fs/directory? f))
+     (do (fs/delete! f) (response/redirect (pipeline-url request pipeline)))
+     (response/not-found {}))))
+
 (def handlers
   [""
-   {:middleware [wrap-job-coordinates wrap-links]}
+   {:middleware [wrap-job-coordinates wrap-resource wrap-links]}
    ["/"
     {:name ::index-request
      :handler handle-index-request}]
    ["/:pipeline/"
     {:name ::job-request
      :handler handle-pipeline-request
-     :middleware [wrap-assoc-xpl]
+     :middleware [wrap-xpl]
      :parameters {:path (s/keys :req-un [::pipeline])}
      :post {:handler handle-job-request
-            :middleware [wrap-assoc-job]}}]
+            :middleware [wrap-job]}}]
    ["/:pipeline/:job/*path"
     {:name ::resource-request
      :handler handle-resource-request
-     :middleware [wrap-resource-exists]
-     :parameters {:path (s/keys :req-un [::pipeline ::job ::path])}}]])
+     :parameters {:path (s/keys :req-un [::pipeline ::job ::path])}
+     :delete {:handler handle-job-removal}}]])
 
 (defn log-exceptions
   [handler ^Throwable e request]
