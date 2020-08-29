@@ -4,17 +4,37 @@
             [clojure.string :as str]
             [clojure.tools.cli :refer [parse-opts]]
             [clojure.tools.logging :as log]
-            [mount.core :as mount]))
+            [cronjure.core :as cron]
+            [cronjure.definitions :as crondef]
+            [mount.core :as mount])
+  (:import java.time.Duration))
+
+(def parse-cron
+  (partial cron/parse crondef/quartz))
 
 (def cli-args
-  [[nil "--http PORT" "HTTP port for embedded server"
+  [[nil "--http PORT"
+    "HTTP port for embedded server"
     :parse-fn #(Integer/parseInt %)
     :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]]
-   [nil "--http-context-path PATH" "HTTP context path ('' by default)"]
-   [nil "--http-doc-root DIR" "HTTP document root for pipeline jobs"
+   [nil "--http-context-path PATH"
+    "HTTP context path ('' by default)"]
+   [nil "--http-doc-root DIR"
+    "HTTP document root for pipeline jobs"
     :parse-fn io/file]
+   [nil "--http-cleanup-schedule CLEANUP_CRON_EXPR"
+    "Schedule for periodic cleanup of old jobs (cron expression)"
+    :parse-fn #(cron/parse crondef/quartz %)
+    :default (cron/parse crondef/quartz "0 1 0 * * ?")
+    :default-desc "0 1 0 * * ?"]
+   [nil "--http-job-max-age JOB_MAX_AGE"
+    "Maximum age of jobs; older jobs are removed periodically"
+    :parse-fn #(Duration/parse %)
+    :default (Duration/ofDays 7)]
    ["-h" "--help"]])
 
+(comment
+  (parse-opts ["--http" "2000"] cli-args))
 (defn usage [options-summary]
   (->>
    ["Idrovora - A pump station for your XProc pipelines"

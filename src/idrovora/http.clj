@@ -2,9 +2,10 @@
   (:require [clojure.core.async :as a]
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
-            [clojure.stacktrace :refer [print-stack-trace]]
+            [clojure.stacktrace :refer [print-cause-trace]]
             [clojure.string :as str]
             [clojure.tools.logging :as log]
+            [cronjure.core :as cron]
             [idrovora.fs :as fs]
             [idrovora.xproc :as xproc]
             [mount.core :as mount :refer [defstate]]
@@ -21,7 +22,7 @@
             [ring.util.response :as response])
   (:import java.io.File
            java.net.URL
-           java.time.Instant
+           [java.time Duration Instant]
            java.util.UUID))
 
 (def ^:private configured-doc-root
@@ -226,7 +227,7 @@
            (if-not error
              (response/created (job-url request pipeline job) (resource job-dir))
              (->
-              {:error (-> error print-stack-trace with-out-str)}
+              {:error (-> error print-cause-trace with-out-str)}
               (response/response)
               (response/status 502)))))
           (finally (unsubscribe))))))
@@ -322,10 +323,11 @@
           http-doc-root (reset! doc-root
                                 (or @configured-doc-root
                                     (fs/make-temp-dir! "idrovora-http-")))]
-      (log/infof "Starting HTTP server at %s/tcp" http-port)
-      (log/infof "Serving HTTP docs at '%s' from '%s'"
-                 (str/replace (str "/" http-context-path) #"^/+" "/")
-                 (str @doc-root))
+      (log/infof "Starting HTTP server %s"
+                 {:tcp http-port
+                  :ctx (str/replace (str "/" http-context-path) #"^/+" "/")
+                  :pipelines (sort (pipeline-names))
+                  :dir (str http-doc-root)})
       (require 'ring.adapter.jetty)
       ((ns-resolve 'ring.adapter.jetty 'run-jetty)
        (ring/ring-handler
@@ -346,3 +348,28 @@
     (when-not @configured-doc-root
       (fs/delete! @doc-root true)
       (log/debugf "Removed temporary HTTP docs %s" @doc-root))))
+
+(defn cleanup-jobs
+  [job-max-age]
+  (doseq [pipeline (filter fs/directory? (fs/dir-contents @doc-root))
+          job (filter fs/directory? (fs/dir-contents pipeline))
+          :let [job-age (- (System/currentTimeMillis) (fs/last-modified job))
+                job-age (Duration/ofMillis job-age)
+                clean-job? (pos? (compare job-age job-max-age))]]
+    (when clean-job?
+      (log/debugf "Cleaning %s (%s)" job job-age)
+      (fs/delete! job))))
+
+(defstate cleanup
+  :start
+  (when (:http (mount/args))
+    (let [{:keys [:http-cleanup-schedule :http-job-max-age]} (mount/args)
+          next (partial cron/time-to-next-execution http-cleanup-schedule :millis)
+          stop-ch (a/chan)]
+      (a/go-loop []
+        (when-let [_ (a/alt! (a/timeout (next)) :scheduled stop-ch ([v] v))]
+          (try (cleanup-jobs http-job-max-age)
+               (catch Throwable t (log/warn t "Job cleanup error")))
+          (recur)))))
+  :stop
+  (when cleanup))
