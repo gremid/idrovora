@@ -14,10 +14,12 @@ LABEL org.label-schema.build-date=$BUILD_DATE \
   org.label-schema.version=$VERSION \
   org.label-schema.schema-version="1.0"
 
-COPY . /app
+COPY deps.edn /app/deps.edn
 WORKDIR /app
 
 # Pull dependencies
 RUN clojure -Stree
+
+COPY . /app
 
 ENTRYPOINT ["/usr/local/bin/clojure", "-m", "idrovora.cli"]
