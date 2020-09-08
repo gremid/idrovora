@@ -1,13 +1,13 @@
 (ns user
-  (:require [idrovora.cli :as cli]
-            [mount.core :as mount]
-            [clojure.java.io :as io]))
+  (:require [idrovora.cli :as cli]))
+
+(require '[mount.core :as mount])
 
 (set! *warn-on-reflection* true)
 
 (defn start
   []
-  (cli/start {:http 3000 :http-context-path "/xproc"} "test/xpl"))
+  (cli/start "--http" "3000" "--http-context-path" "/xproc" "test/xpl"))
 
 (defn stop
   []

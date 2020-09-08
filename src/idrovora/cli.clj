@@ -33,8 +33,13 @@
     :default (Duration/ofDays 7)]
    ["-h" "--help"]])
 
+(defn parse-args
+  [args]
+  (parse-opts args cli-args))
+
 (comment
-  (parse-opts ["--http" "2000"] cli-args))
+  (parse-args ["--http" "2000"]))
+
 (defn usage [options-summary]
   (->>
    ["Idrovora - A pump station for your XProc pipelines"
@@ -74,15 +79,18 @@
 
 (defn start
   ([]
-   (start {} "."))
-  ([options & dirs]
-   (let [dirs (map io/file dirs)
-         dirs (distinct (or (seq dirs) (list (io/file "."))))]
-     (log/info "Starting Idrovora")
-     (when (:http options) (require 'idrovora.http))
-     (->>
-      (mount/with-args (merge options {:dirs dirs}))
-      (mount/start)))))
+   (start "."))
+  ([& args]
+   (let [{:keys [options errors summary arguments]} (parse-args args)]
+     (when (:help options) (exit 0 (usage summary)))
+     (when errors (exit 1 (error-msg errors)))
+     (let [dirs (map io/file arguments)
+           dirs (distinct (or (seq dirs) (list (io/file "."))))]
+       (log/info "Starting Idrovora")
+       (when (:http options) (require 'idrovora.http))
+       (->>
+        (mount/with-args (merge options {:dirs dirs}))
+        (mount/start))))))
 
 (defn stop
   []
@@ -91,14 +99,11 @@
 
 (defn -main
   [& args]
-  (let [{:keys [options errors summary arguments]} (parse-opts args cli-args)]
-    (when (:help options) (exit 0 (usage summary)))
-    (when errors (exit 1 (error-msg errors)))
-    (try
-      (.. (Runtime/getRuntime)
-          (addShutdownHook (Thread. (partial stop))))
-      (apply start options arguments)
-      (.. (Thread/currentThread) (join))
-      (catch Throwable t
-        (print-stack-trace t)
-        (exit 2)))))
+  (try
+    (apply start args)
+    (.. (Runtime/getRuntime)
+        (addShutdownHook (Thread. (partial stop))))
+    (.. (Thread/currentThread) (join))
+    (catch Throwable t
+      (print-stack-trace t)
+      (exit 2))))

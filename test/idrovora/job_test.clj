@@ -8,7 +8,7 @@
 (defn cli-fixture
   [f]
   (try
-    (cli/start {:http 3000 :http-context-path "/xproc"} "test/xpl")
+    (cli/start "--http" "3000" "--http-context-path" "/xproc" "test/xpl")
     (f)
     (finally
       (cli/stop))))
